@@ -3,17 +3,24 @@ defmodule NeonPredict do
     otp_app: :neon,
     crate: :neon_predict
 
-  def predict(%{id: symbol_id}, length) do
+  @default_aggregate_length 288
+
+  def stock(symbol), do: stock(symbol, @default_aggregate_length)
+
+  def stock(%{id: symbol_id} = symbol, length) when is_integer(length) do
     aggregates =
       Neon.Stock.list_aggregates(
-        limit: 288,
+        limit: length,
         symbol_id: symbol_id,
         width: "5 minutes"
       )
 
-    data = Enum.map(aggregates, &cast_aggregate/1)
+    stock(symbol, aggregates)
+  end
 
-    moving_averages(data, length)
+  def stock(_symbol, aggregates) do
+    data = Enum.map(aggregates, &cast_aggregate/1)
+    predict_stock(data)
   end
 
   defp cast_aggregate(aggregate) do
@@ -23,9 +30,9 @@ defmodule NeonPredict do
       low_price: Decimal.to_float(aggregate.low_price),
       close_price: Decimal.to_float(aggregate.close_price),
       volume: aggregate.volume,
-      timestamp: NaiveDateTime.to_iso8601(aggregate.inserted_at, :extended)
+      timestamp: aggregate.inserted_at |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_unix()
     }
   end
 
-  def moving_averages(_, _), do: :erlang.nif_error(:nif_not_loaded)
+  def predict_stock(_), do: :erlang.nif_error(:nif_not_loaded)
 end

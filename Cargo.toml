@@ -12,3 +12,4 @@ crate-type = ["dylib"]
 [dependencies]
 rustler = "0.22.0-rc.0"
 serde = "1.0.116"
+ta = "0.3.0"
