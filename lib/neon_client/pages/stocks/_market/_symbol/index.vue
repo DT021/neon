@@ -21,18 +21,29 @@
         <dt>Volume:</dt>
         <dd>{{ animation.volume | round }}</dd>
       </dl>
+
+      <button @click="timeframe = '24h'">
+        24h
+      </button>
+
+      <button @click="timeframe = '48h'">
+        48h
+      </button>
+
+      <button @click="timeframe = '7d'">
+        7d
+      </button>
+
+      <button @click="timeframe = '14d'">
+        14d
+      </button>
     </header>
 
-    <div
+    <stock-symbol-full-graph
       class="graph"
-      @mousemove="graphMouseMove"
-      @mouseleave="graphMouseOut"
-    >
-      <svg
-        ref="chart"
-        class="chart"
-      />
-    </div>
+      :aggregates="aggregateData"
+      :timeframe="timeframe"
+    />
 
     <div>
       <form-input
@@ -74,11 +85,6 @@
 
   h1 {
     margin: 0;
-  }
-
-  .graph svg {
-    height: 100%;
-    width: 100%;
   }
 
   .price {
@@ -126,46 +132,7 @@
   .graph {
     height: 60vh;
     margin: 1rem 0;
-    position: relative;
     width: 100%;
-  }
-
-  .graph >>> .open-close-line {
-    fill: none;
-    stroke-dasharray: 6;
-    stroke-width: 1px;
-    stroke: var(--silver-900);
-  }
-
-  .graph >>> .open-close-text {
-    font-family: var(--font);
-    font-size: 0.8rem;
-    font-weight: 200;
-    stroke: var(--silver-700);
-  }
-
-  .graph >>> .line {
-    fill: none;
-    stroke-width: 1.5;
-    stroke: var(--accent);
-  }
-
-  .graph >>> .tooltip-line {
-    fill: none;
-    stroke-dasharray: 6 12;
-    stroke-width: 2px;
-    stroke: var(--blueberry-500);
-  }
-
-  .graph >>> .tooltip-dot {
-    fill: var(--blueberry-300);
-  }
-
-  .graph >>> .tooltip-axis {
-    font-family: var(--font);
-    font-size: 0.8rem;
-    font-weight: 200;
-    stroke: var(--blueberry-500);
   }
 </style>
 
@@ -176,7 +143,7 @@ import throttle from 'lodash/throttle'
 import debounce from 'lodash/debounce'
 import gql from 'graphql-tag'
 import { faAngleUp } from '@fortawesome/free-solid-svg-icons'
-import { set, startOfDay } from 'date-fns'
+import { set, sub, startOfDay } from 'date-fns'
 
 import * as formatting from '~/filters/formatting'
 
@@ -198,7 +165,7 @@ export default {
       variables () {
         return {
           symbol: this.symbol.id,
-          from: startOfDay(new Date()),
+          from: this.startTime,
           width: '5 minutes'
         }
       },
@@ -266,36 +233,13 @@ export default {
       id: null
     },
 
-    timeframe: 'day',
+    timeframe: '14d',
     days: 30,
-
-    graph: {
-      x: null,
-      xMin: null,
-      xMax: null,
-
-      y: null,
-      yMin: null,
-      yMax: null,
-      yPad: null,
-
-      openLine: null,
-      closeLine: null,
-      currentLine: null
-    },
-
-    tooltip: {
-      minX: null,
-      maxX: null,
-
-      showingX: null
-    },
 
     animation: {
       diffPrice: 0,
       percentage: 0,
       price: 0,
-      tooltipPrice: 0,
       volume: 0
     }
   }),
@@ -351,6 +295,22 @@ export default {
       }
     },
 
+    startTime () {
+      switch (this.timeframe) {
+        case '14d':
+          return sub(new Date(), { days: 14 })
+
+        case '7d':
+          return sub(new Date(), { days: 7 })
+
+        case '48h':
+          return sub(new Date(), { hours: 48 })
+
+        default:
+          return sub(new Date(), { hours: 24 })
+      }
+    },
+
     style () {
       if (this.diffPrice != null && this.diffPrice > 0) {
         return 'up'
@@ -371,15 +331,6 @@ export default {
   },
 
   watch: {
-    aggregateData: {
-      deep: true,
-      handler () {
-        this.drawGraph()
-        this.drawGraphLine()
-        this.updateGraphTooltip()
-      }
-    },
-
     diffPrice (diffPrice) {
       anime({
         targets: this.animation,
@@ -388,10 +339,6 @@ export default {
         easing: 'easeOutExpo',
         duration: 1000
       })
-    },
-
-    'graph.x' () {
-      this.drawGraphMarketLines()
     },
 
     percentage (percentage) {
@@ -412,14 +359,6 @@ export default {
         easing: 'easeOutExpo',
         duration: 1000
       })
-    },
-
-    'tooltip.maxX' () {
-      this.drawGraphTooltip()
-    },
-
-    'tooltip.showingX' () {
-      this.drawGraphTooltip()
     },
 
     volume (volume) {
@@ -446,173 +385,6 @@ export default {
           days: this.days
         }
       })
-    },
-
-    drawGraph () {
-      const { height, width } = this.$refs.chart.getBoundingClientRect()
-
-      this.graph.xMin = this.dayTime(2)
-      this.graph.xMax = this.dayTime(22)
-
-      this.graph.x = d3.scaleTime()
-        .domain([
-          this.graph.xMin,
-          this.graph.xMax
-        ])
-        .range([0, width])
-
-      this.graph.yMin = d3.min(this.aggregateData, d => d.openPrice)
-      this.graph.yMax = d3.max(this.aggregateData, d => d.closePrice)
-      this.graph.yPad = (this.graph.yMax - this.graph.yMin) * 0.1
-
-      this.graph.y = d3.scaleLinear()
-        .domain([
-          this.graph.yMin - this.graph.yPad,
-          this.graph.yMax + this.graph.yPad
-        ])
-        .range([height - this.remToPx(4), 0])
-    },
-
-    drawGraphLine () {
-      const svg = d3.select(this.$refs.chart)
-
-      const line = (!svg.select('#data-line').empty())
-        ? svg.select('#data-line')
-        : svg.append('path').attr('id', 'data-line').attr('class', 'line')
-
-      line
-        .datum(this.aggregateData)
-        .attr('d', d3.line()
-          .x(d => this.graph.x(d.insertedAt))
-          .y(d => this.graph.y(d.openPrice))
-        )
-    },
-
-    drawGraphMarketLines () {
-      const { height } = this.$refs.chart.getBoundingClientRect()
-      const svg = d3.select(this.$refs.chart)
-
-      // TODO: Update these values with market open and close
-      this.graph.openLine = this.graph.x(this.dayTime(7))
-      this.graph.closeLine = this.graph.x(this.dayTime(15))
-
-      svg.select('#open-line').remove()
-      svg.append('line')
-        .attr('id', 'open-line')
-        .attr('x1', this.graph.openLine)
-        .attr('y1', 0)
-        .attr('x2', this.graph.openLine)
-        .attr('y2', height - this.remToPx(3) - 6)
-        .attr('class', 'open-close-line')
-
-      svg.select('#open-text').remove()
-      svg.append('text')
-        .attr('id', 'open-text')
-        .attr('x', this.graph.openLine)
-        .attr('y', height - this.remToPx(2.8))
-        .attr('text-anchor', 'middle')
-        .attr('class', 'open-close-text')
-        .text('open')
-
-      svg.select('#close-line').remove()
-      svg.append('line')
-        .attr('id', 'close-line')
-        .attr('x1', this.graph.closeLine)
-        .attr('y1', 0)
-        .attr('x2', this.graph.closeLine)
-        .attr('y2', height - this.remToPx(3) - 6)
-        .attr('class', 'open-close-line')
-
-      svg.select('#close-text').remove()
-      svg.append('text')
-        .attr('id', 'close-text')
-        .attr('x', this.graph.closeLine)
-        .attr('y', height - this.remToPx(2.8))
-        .attr('text-anchor', 'middle')
-        .attr('class', 'open-close-text')
-        .text('close')
-    },
-
-    drawGraphTooltip () {
-      const { height } = this.$refs.chart.getBoundingClientRect()
-      const svg = d3.select(this.$refs.chart)
-
-      const currentX = (this.tooltip.showingX || this.tooltip.maxX)
-      const [currentXDate, currentYValue] = this.graphCords(currentX)
-
-      const [xDate, yValue] = (currentYValue != null)
-        ? [currentXDate, currentYValue]
-        : this.graphCords(this.tooltip.maxX)
-
-      const x = this.graph.x(xDate)
-
-      const line = (!svg.select('.tooltip-line').empty())
-        ? svg.select('.tooltip-line')
-        : svg.append('line').attr('class', 'tooltip-line')
-
-      line
-        .datum(this.aggregateData)
-        .attr('x1', x)
-        .attr('y1', 6)
-        .attr('x2', x)
-        .attr('y2', height - this.remToPx() - 12)
-
-      const text = (!svg.select('.tooltip-axis').empty())
-        ? svg.select('.tooltip-axis')
-        : svg.append('text').attr('class', 'tooltip-axis')
-
-      text
-        .attr('x', x)
-        .attr('y', height - this.remToPx(0.8))
-        .attr('text-anchor', 'middle')
-        .text(xDate.toLocaleTimeString())
-
-      const circle = (!svg.select('.tooltip-dot').empty())
-        ? svg.select('.tooltip-dot')
-        : svg.append('circle').attr('class', 'tooltip-dot')
-
-      circle
-        .datum(this.aggregateData)
-        .attr('r', 6)
-        .attr('class', 'tooltip-dot')
-        .attr('cx', x)
-        .attr('cy', this.graph.y(yValue))
-    },
-
-    graphCords (x) {
-      const coeff = 1000 * 60 * 5
-
-      const xDate = this.graph.x.invert(x)
-      const roundedDate = new Date(Math.round(xDate.getTime() / coeff) * coeff)
-      const roundedTime = roundedDate.getTime()
-
-      const matchingData = this.aggregateData.find(v => (v.insertedAt.getTime() === roundedTime))
-      const yValue = (matchingData) ? matchingData.openPrice : null
-
-      return [roundedDate, yValue]
-    },
-
-    graphMouseMove: throttle(function (e) {
-      if (e.offsetX < this.tooltip.minX) {
-        this.tooltip.showingX = this.tooltip.minX
-      } else if (e.offsetX > this.tooltip.maxX) {
-        this.tooltip.showingX = this.tooltip.maxX
-      } else {
-        this.tooltip.showingX = e.offsetX
-      }
-    }, 100),
-
-    graphMouseOut: debounce(function (e) {
-      this.tooltip.showingX = null
-    }, 1000),
-
-    remToPx (rems = 1) {
-      return rems * parseFloat(getComputedStyle(document.documentElement).fontSize)
-    },
-
-    updateGraphTooltip () {
-      this.tooltip.minX = this.graph.x(d3.min(this.aggregateData, d => d.insertedAt))
-      this.tooltip.maxX = this.graph.x(d3.max(this.aggregateData, d => d.insertedAt))
     }
   }
 }

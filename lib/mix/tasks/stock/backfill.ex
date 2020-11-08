@@ -16,9 +16,12 @@ defmodule Mix.Tasks.Stock.Backfill do
 
     symbols
     |> Enum.map(&parse_symbol/1)
-    |> Enum.each(fn [symbol, days] ->
-      Logger.info("Backfilling #{days} days for #{symbol}")
-      Stock.backfill_aggregate(symbol, days)
+    |> Enum.each(fn [symbol_symbol, days] ->
+      Logger.info("Backfilling #{days} days for #{symbol_symbol}")
+
+      [symbol: symbol_symbol]
+      |> Stock.get_symbol()
+      |> Stock.backfill_aggregate(days)
     end)
   end
 
